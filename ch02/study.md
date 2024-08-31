@@ -227,3 +227,84 @@
     '
     ```
   
+## 2.3. Application manifest 에 배포 정의하기
+- Application manifest
+  - Application을 낱낱이 기술하는 것이 목적
+    - 선언형 - 최종결과를 만드는 과정을 따지지 않는 방식
+      - 명령형 - kubectl 처럼 일일이 지시하는 방식
+  - JSON / YAML 로 작성
+    - YAML은 주석을 작성할 수 있음
+  - Manifest 실행을 위해선 kubectl로 해야 한다. 
+  - Application 정의를 공유하기 쉽고 똑같은 배포를 반복할 수 있다.
+  - 심화되면 복제본을 몇개, CPU/메모리 상한, 상태 체크 방식, 설정값 어디서 읽어올지, 데이터 어디에 저장할지 등을 정의할 수 있다.
+- 실습 1
+  - pod.yaml 정의
+    ```yaml
+    # pod.yaml
+  
+    apiVersion: v1            # Kubernetes API version
+    kind: Pod                 # 정의하려는 리소스 유형 
+    metadata:
+      name: hello-kiamol-3    # 필수
+    #  labels:                # Optional
+    spec:
+      containers:                         # 실행할 Container 정의
+      - name: web                         # Container 이름
+        image: kiamol/ch02-hello-kiamol   # Container image
+    ```
+  - Manifest 파일로 app 배포
+    ```bash
+    kubectl apply -f pod.yaml
+    # pod/hello-kiamol-3 created
+    ```
+  - 실행중인 Pod 목록 보기
+    ```bash
+    kubectl get pods
+    : '
+    NAME                             READY   STATUS    RESTARTS       AGE
+    hello-kiamol                     1/1     Running   2 (2d7h ago)   3d12h
+    hello-kiamol-2-5f5ddcfc5-rjpjk   1/1     Running   1 (2d7h ago)   2d11h
+    hello-kiamol-3                   1/1     Running   0              2m31s
+    '
+    ```
+  - Remote Manifest 도 실행 가능
+    ```bash
+    kubectl apply -f https://raw.githubusercontent.com/ndukwon/kiamol/master/ch02/pod.yaml
+    # pod/hello-kiamol-3 unchanged
+    # 정의된 리소스의 상태가 현재 클러스터에 실행중인 pod와 일치하기 때문
+    ```
+
+  - 실습 2
+    - deployment.yaml 정의
+      ```yaml
+      # deployment.yaml
+      apiVersion: apps/v1           # Kubernetes API version
+      kind: Deployment              # 정의하려는 리소스 유형 
+      metadata:
+        name: hello-kiamol-4        # Deployment의 이름        
+      spec:                         # Deployment의 관리대상 내용
+        selector:
+          matchLabels:
+            app: hello-kiamol-4
+        template:                   # Deployment가 Pod을 만들때 사용
+          metadata:                 # Pod의 이름이 없음을 주의
+            labels:
+              app: hello-kiamol-4   # Deployment의 spec.selector.matchLabels 와 일치해야 함
+          spec:                     # Pod의 정의
+            containers:
+              - name: web
+                image: kiamol/ch02-hello-kiamol
+      ```
+    - Manifest 파일로 Deployment 생성 -> app 실행
+      ```bash
+      kubectl apply -f deployment.yaml
+      # deployment.apps/hello-kiamol-4 created
+      ```
+    - 새로운 Deployment가 만든 Pod 찾기
+      ```bash
+      kubectl get pods -l app=hello-kiamol-4
+      : '
+      NAME                              READY   STATUS    RESTARTS   AGE
+      hello-kiamol-4-7fff8f7fb5-ftwdp   1/1     Running   0          2m14s
+      '
+      ```
