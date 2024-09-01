@@ -274,37 +274,154 @@
     # 정의된 리소스의 상태가 현재 클러스터에 실행중인 pod와 일치하기 때문
     ```
 
-  - 실습 2
-    - deployment.yaml 정의
-      ```yaml
-      # deployment.yaml
-      apiVersion: apps/v1           # Kubernetes API version
-      kind: Deployment              # 정의하려는 리소스 유형 
-      metadata:
-        name: hello-kiamol-4        # Deployment의 이름        
-      spec:                         # Deployment의 관리대상 내용
-        selector:
-          matchLabels:
-            app: hello-kiamol-4
-        template:                   # Deployment가 Pod을 만들때 사용
-          metadata:                 # Pod의 이름이 없음을 주의
-            labels:
-              app: hello-kiamol-4   # Deployment의 spec.selector.matchLabels 와 일치해야 함
-          spec:                     # Pod의 정의
-            containers:
-              - name: web
-                image: kiamol/ch02-hello-kiamol
-      ```
-    - Manifest 파일로 Deployment 생성 -> app 실행
-      ```bash
-      kubectl apply -f deployment.yaml
-      # deployment.apps/hello-kiamol-4 created
-      ```
-    - 새로운 Deployment가 만든 Pod 찾기
-      ```bash
-      kubectl get pods -l app=hello-kiamol-4
-      : '
-      NAME                              READY   STATUS    RESTARTS   AGE
-      hello-kiamol-4-7fff8f7fb5-ftwdp   1/1     Running   0          2m14s
-      '
-      ```
+- 실습 2
+  - deployment.yaml 정의
+    ```yaml
+    # deployment.yaml
+    apiVersion: apps/v1           # Kubernetes API version
+    kind: Deployment              # 정의하려는 리소스 유형 
+    metadata:
+      name: hello-kiamol-4        # Deployment의 이름        
+    spec:                         # Deployment의 관리대상 내용
+      selector:
+        matchLabels:
+          app: hello-kiamol-4
+      template:                   # Deployment가 Pod을 만들때 사용
+        metadata:                 # Pod의 이름이 없음을 주의
+          labels:
+            app: hello-kiamol-4   # Deployment의 spec.selector.matchLabels 와 일치해야 함
+        spec:                     # Pod의 정의
+          containers:
+            - name: web
+              image: kiamol/ch02-hello-kiamol
+    ```
+  - Manifest 파일로 Deployment 생성 -> app 실행
+    ```bash
+    kubectl apply -f deployment.yaml
+    # deployment.apps/hello-kiamol-4 created
+    ```
+  - 새로운 Deployment가 만든 Pod 찾기
+    ```bash
+    kubectl get pods -l app=hello-kiamol-4
+    : '
+    NAME                              READY   STATUS    RESTARTS   AGE
+    hello-kiamol-4-7fff8f7fb5-ftwdp   1/1     Running   0          2m14s
+    '
+    ```
+
+## 2.4. Pod에서 실행 중인 애플리케이션에 접근하기
+- 실제 앱은 Container 속에서 동작
+- kubectl을 사용하여 Pod 내부의 Container에 접근할 수 있다.
+  - Container 안에서 명령을 실행, 로그 열람, 파일 복사 등
+- Pod 속 Container에 대화형 셸을 연결하면 Pod 속 상황을 파악하기 좋다.
+  - 설정값 정확한지 파일 내용을 확인
+  - 도메인이 서비스로 연결되었는지 확인
+  - 가상 네트워크로 API에 접속 되는지 ping
+- 앱 로그를 열람하는 전용 명령어가 따로 있다.
+  - Kubernetes는 Container runtime을 경유해서 앱 로그를 불러온다.
+- Pod 이름을 직접 알지 못해도 Deployment가 관리하는 Pod에서 명령을 실행할 수 있다.
+  - Container 객체나 label로 참조
+
+- 실습 - Container 속에서 명령 실행
+  - Pod의 내부 IP 주소 확인
+    ```bash
+    kubectl get pod hello-kiamol -o custom-columns=NAME:metadata.name,POD_IP:status.podIP
+    :'
+    NAME           POD_IP
+    hello-kiamol   10.xx.xx.xx
+    '
+    ```
+  - Pod 내부와 연결할 대화영 셸 실행
+    ```bash
+    # kubectl exec -it hello-kiamol sh
+    :'
+    error: exec [POD] [COMMAND] is not supported anymore. Use exec [POD] -- [COMMAND] instead
+    See "kubectl exec -h" for help and examples
+    '
+    
+    kubectl exec -it hello-kiamol -- sh
+    # / #
+    ```
+  - Pod 안에서
+    ```bash
+    # 1. IP 주소 확인
+    hostname -i
+    # 10.xx.xx.xx
+    
+    # 2. 웹앱 동작 확인
+    wget -O - http://localhost | head -n 4
+    :'
+    Connecting to localhost ([::1]:80)
+    writing to stdout
+    -                    <html>
+    100%   <body>
+    |****************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************    <h1>
+    Hello from Chapter 2!
+    |   353  0:00:00 ETA
+    written to stdout
+    '
+    
+    # 3. 셸 세션 종료
+    exit
+    ```
+- 실습 - Kubernetes 로그와 실제 Container에서 보는 로그 일치 확인
+  - Kubernetes를 통해 Container의 최근 로그를 출력
+    ```bash
+    kubectl logs --tail=2 hello-kiamol
+    :'
+    2024/09/01 22:12:35 [notice] 1#1: start worker process 33
+    ::1 - - [01/Sep/2024:22:37:53 +0000] "GET / HTTP/1.1" 200 353 "-" "Wget" "-"
+    '
+    ```
+  - Docker를 통해 Container를 접속해서 실제 로그와 동일한지 확인
+    ```bash
+    docker container logs --tail=2 $(docker container ls -q --filter lebel=io.kubernetes.container.name=hello-kiamol)
+    ```
+- 실습2 - 로그 열람  
+  - YAML --> Deployment --> Pod --> Container --> 웹앱 호출
+    ```bash
+    kubectl exec deploy/hello-kiamol-4 -- sh -c 'wget -O - http://localhost > /dev/null'
+    :'
+    Connecting to localhost ([::1]:80)
+    writing to stdout
+    -                    100% |********************************|   353  0:00:00 ETA
+    written to stdout
+    '
+    ```
+  - 해당 Pod의 로그 열람
+    ```bash
+    kubectl logs --tail=1 -l app=hello-kiamol-4
+    # ::1 - - [01/Sep/2024:23:08:11 +0000] "GET / HTTP/1.1" 200 353 "-" "Wget" "-"
+    ```
+- 실습3 - 파일 복사
+  - 로컬 컴퓨터에서 임시 디렉터리 생성
+    ```bash
+    mkdir -p /tmp/kiamol/ch02
+    ```
+  - Pod 혹에서 웹페이지를 로컬 컴퓨터로 복사
+    ```bash
+    kubectl cp hello-kiamol:/usr/share/nginx/html/index.html /tmp/kiamol/ch02/index.html
+    # tar: removing leading '/' from member names
+    # 오류 아님
+    ```
+  - 로컬 컴퓨터에서 파일 내용 확인
+    ```bash
+    cat /tmp/kiamol/ch02/index.html
+    :'
+    <html>
+      <body>
+        <h1>
+          Hello from Chapter 2!
+        </h1>
+        <h2>
+          This is
+          <a
+            href="https://www.manning.com/books/learn-kubernetes-in-a-month-of-lunches"
+            >Learn Kubernetes in a Month of Lunches</a
+          >.
+        </h2>
+        <h3>By <a href="https://blog.sixeyed.com">Elton Stoneman</a>.</h3>
+      </body>
+    </html>
+    '
+    ```
