@@ -425,3 +425,183 @@
     </html>
     '
     ```
+
+## 2.5. Kubernetes의 리소스 관리 이해하기
+- Controller 가 만든 리소스의 삭제는 해당 컨트롤러의 책임
+- 외부 간섭을 용인하지 않으므로, kubectl로 리소스 삭제 가능하지만 다시 되살아난다.
+- 실습 - kubectl delete 명령으로 삭제 후 관찰
+  - 실행중인 모든 Pod의 목록 출력
+    ```bash
+    kubectl get pods
+    :'
+    NAME                              READY   STATUS    RESTARTS      AGE
+    hello-kiamol                      1/1     Running   4 (38h ago)   6d23h
+    hello-kiamol-2-5f5ddcfc5-rjpjk    1/1     Running   3 (38h ago)   5d22h
+    hello-kiamol-3                    1/1     Running   2 (38h ago)   3d11h
+    hello-kiamol-4-7fff8f7fb5-ftwdp   1/1     Running   2 (38h ago)   3d11h
+    '
+    ```
+  - 모든 Pod 삭제
+    ```bash
+    kubectl delete pods --all
+    :'
+    pod "hello-kiamol" deleted
+    pod "hello-kiamol-2-5f5ddcfc5-rjpjk" deleted
+    pod "hello-kiamol-3" deleted
+    pod "hello-kiamol-4-7fff8f7fb5-ftwdp" deleted
+    '
+    ```
+  - Pod 삭제 되었는지 확인
+    ```bash
+    kubectl get pods
+    :'
+    NAME                              READY   STATUS    RESTARTS   AGE
+    hello-kiamol-2-5f5ddcfc5-g4vlg    1/1     Running   0          3m7s
+    hello-kiamol-4-7fff8f7fb5-xkw8h   1/1     Running   0          3m7s
+    '
+    # 자신을 관리해줄 Controller 객체가 없었다.
+    ```
+  - Deployment 목록 확인
+    ```bash
+    kubectl get deploy
+    :'
+    NAME             READY   UP-TO-DATE   AVAILABLE   AGE
+    hello-kiamol-2   1/1     1            1           5d22h
+    hello-kiamol-4   1/1     1            1           3d11h
+    '
+    ```
+  - Deployment 모두 삭제
+    ```bash
+    kubectl delete deploy --all
+    :'
+    deployment.apps "hello-kiamol-2" deleted
+    deployment.apps "hello-kiamol-4" deleted
+    '
+    ```
+  - Pod 목록 확인
+    ```bash
+    kubectl get pods
+    # No resources found in default namespace.
+    ```
+  - 모든 리소스 목록 확인
+    ```bash
+    kubectl get all
+    :'
+    NAME                 TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
+    service/kubernetes   ClusterIP   10.43.0.1    <none>        443/TCP   8d
+    '
+    # Kubernetes API 서버만 남아있다.
+    ```
+
+## 2.6. 연습 문제 -  Pod 하나를 포함하는 Deployment YAML 정의를 작성
+- 80번 포트 웹사이트 실행
+- 
+- 풀기
+  - YAML
+    ```bash
+    apiVersion: app/v1
+    kind: Deployment
+    metadata:
+      name: ch2-6-practice-trial-deployment
+    spec:
+      selector:
+        matchLabels:
+          app: ch2-6-practice-trial-app
+      template:
+        metadata:
+          labels:
+            app: ch2-6-practice-trial-app
+        spec:
+          containers:
+            - name: webpage
+              image: kiamol/ch02-hello-kiamol
+    ```
+  - Deployment 실행
+    ```bash
+    kubectl apply -f lab/trial-deployment.yaml
+    :'
+    1. metadata.name 을 ch2.6-practice-trial-deployment 로 했을 때  >>  dot 에 대한 경고 뜸
+       Warning: metadata.name: this is used in Pod names and hostnames, which can result in surprising behavior; a DNS label is recommended: [must not contain dots]
+       deployment.apps/ch2.6-practice-trial-deployment created
+    2. metadata.name 을 ch2_6-practice-trial-deployment 로 했을 때  >>  사용할 수 없음
+       The Deployment "ch2_6-practice-trial-deployment" is invalid: 
+       * metadata.name: Invalid value: "ch2_6-practice-trial-deployment": field is immutable
+       * spec.selector: Invalid value: v1.LabelSelector{MatchLabels:map[string]string{"app":"ch2_6-practice-trial-app"}, MatchExpressions:[]v1.LabelSelectorRequirement(nil)}: field is immutable
+    3. metadata.name 을 ch2-6-practice-trial-deployment 로 했을 때  >>  정상 실행
+       deployment.apps/ch2-6-practice-trial-deployment created
+    '
+    ```
+  - Deployment 확인
+    ```bash
+    kubectl get deployment
+    :'
+    NAME                              READY   UP-TO-DATE   AVAILABLE   AGE
+    ch2-6-practice-trial-deployment   1/1     1            1           74s
+    ch2.6-practice-trial              1/1     1            1           3m45s
+    ch2.6-practice-trial-deployment   1/1     1            1           2m56s
+    '
+    ```
+  - Pod 확인
+    ```bash
+    kubectl get pods
+    :'
+    NAME                                               READY   STATUS    RESTARTS   AGE
+    ch2-6-practice-trial-deployment-857b4b46b6-5zftq   1/1     Running   0          11m
+    ch2.6-practice-trial-77968594b7-tbbmx              1/1     Running   0          14m
+    ch2.6-practice-trial-deployment-6db6c7b549-6frzz   1/1     Running   0          13m
+    '
+    ```
+  - Port 80 열기
+    ```bash
+    kubectl port-forward deploy/ch2-6-practice-trial-deployment 8080:80
+    :'
+    Forwarding from 127.0.0.1:8080 -> 80
+    Forwarding from [::1]:8080 -> 80
+    Handling connection for 8080
+    Handling connection for 8080
+    ^Z
+    [1]  + 14763 suspended  kubectl port-forward deploy/ch2-6-practice-trial-deployment 8080:80
+    '
+    ```
+  - deployment 삭제 1/3
+    ```bash
+    kubectl delete deploy/ch2.6-practice-trial
+    # deployment.apps "ch2.6-practice-trial" deleted
+    
+    kubectl get deployment
+    :'
+    NAME                              READY   UP-TO-DATE   AVAILABLE   AGE
+    ch2-6-practice-trial-deployment   1/1     1            1           28m
+    ch2.6-practice-trial-deployment   1/1     1            1           29m
+    '
+    ```
+  - deployment 삭제 2/3
+    ```bash
+    kubectl delete deploy/ch2.6-practice-trial-deployment
+    # deployment.apps "ch2.6-practice-trial-deployment" deleted
+    
+    kubectl get deployment
+    :'
+    NAME                              READY   UP-TO-DATE   AVAILABLE   AGE
+    ch2-6-practice-trial-deployment   1/1     1            1           29m
+    '
+    ```
+  - deployment 삭제 3/3
+    ```bash
+    kubectl delete deploy/ch2-6-practice-trial-deployment
+    # deployment.apps "ch2-6-practice-trial-deployment" deleted
+    
+    kubectl get deployment
+    # No resources found in default namespace.
+    ```
+
+## 2장 Summary
+- Pod와 Deployment를 통해 Container를 관리
+- YAML로 간단한 앱 정의하는 방법
+- kubectl 을 사용하여 API를 다루는 방법
+
+
+- bla
+  - bla
+    ```bash
+    ```

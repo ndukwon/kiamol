@@ -1,0 +1,16 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ch2-6-practice-trial-deployment
+spec:
+  selector:
+    matchLabels:
+      app: ch2-6-practice-trial-app
+  template:
+    metadata:
+      labels:
+        app: ch2-6-practice-trial-app
+    spec:
+      containers:
+        - name: webpage
+          image: kiamol/ch02-hello-kiamol
