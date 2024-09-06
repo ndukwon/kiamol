@@ -100,6 +100,134 @@
     # ping 명령이 Kubernetes Service에서 지원하지 않는 ICMP 프로토콜을 사용하기 때문
     ```
 
+## 3.2. Pod와 Pod 간 통신
+- ClusterIP
+  - 클러스터내에서 통용되는 IP 주소를 생성
+  - Pod이 어느 노드에서도 이 IP 주소로 접근 가능
+  - 즉, Pod to Pod 통신에서만 쓰인다.
+  - 내부 접근은 허용하되 외부 접근은 차단해야 하는 분산 시스템의 컴포넌트에 적합한 구조
+- 실습1 - Web app, API 역할 각각 Deployment 실행
+  - 각각 Deployment 실행
+    ```bash
+    kubectl apply -f numbers/api.yaml -f numbers/web.yaml
+    # deployment.apps/numbers-api created
+    # deployment.apps/numbers-web created
+    ```
+  - Pod의 준비가 끝날 때까지 기다린다.
+    ```bash
+    kubectl wait --for=condition=Ready pod -l app=numbers-web
+    # pod/numbers-web-f456bfcbf-zrs77 condition met
+    ```
+  - Web 앱에 port-forward 적용
+    ```bash
+    kubectl port-forward deploy/numbers-web 8080:80
+    :'
+    Forwarding from 127.0.0.1:8080 -> 80
+    Forwarding from [::1]:8080 -> 80
+    Handling connection for 8080
+    Handling connection for 8080
+    Handling connection for 8080
+    Handling connection for 8080
+    Handling connection for 8080
+    '
+    ```
+  - http://localhost:8080
+    - Go를 누르면 오류가 발생하는것을 확인
+    - Service는 생성하지 않았기 때문에 서로 통신할 수 없다.
+  - port-forward 중단
+    - ctrl-c
+- 실습2 - Service를 배포
+  - Service 정의 - api-service.yaml
+    ```yaml
+    apiVersion: v1
+    kind: Service
+    
+    metadata:
+      name: numbers-api
+    spec:
+      ports:
+        - port: 80
+      selector:
+        app: numbers-api
+      type: ClusterIP         # 기본 유형이 ClusterIP 이므로 생략 할 수 있다. 하지만 의미를 분명히 하기 위해 명시
+    ```
+  - Service 배포
+    ```bash
+    kubectl apply -f numbers/api-service.yaml
+    # service/numbers-api created
+    ```
+  - Service 상세 정보 1
+    ```bash
+    kubectl get service/numbers-api
+    :'
+    NAME          TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+    numbers-api   ClusterIP   10.43.119.107   <none>        80/TCP    79m
+    '
+    ```
+  - Service 상세 정보 2
+    ```bash
+    kubectl get svc numbers-api
+    :'
+    NAME          TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+    numbers-api   ClusterIP   10.43.119.107   <none>        80/TCP    80m
+    '
+    ```
+  - port-forward 적용
+    ```bash
+    kubectl port-forward deploy/numbers-web 8080:80
+    :'
+    Forwarding from 127.0.0.1:8080 -> 80
+    Forwarding from [::1]:8080 -> 80
+    Handling connection for 8080
+    Handling connection for 8080
+    ^Z
+    [1]  + 19466 suspended  kubectl port-forward deploy/numbers-web 8080:80
+    '
+    ```
+  - http://localhost:8080
+    - Go를 누르면 오류 없이 잘 실행 됨
+  - port-forward 중단
+    - ctrl-c
+- 실습3 - Pod 삭제 후 관찰
+  - 현재 Pod 의 이름과 IP 주소 확인
+    ```bash
+    kubectl get pod -l app=numbers-api -o custom-columns=NAME:metadata.name,POD_IP:status.podIP
+    :'
+    NAME                           POD_IP
+    numbers-api-76d585d955-8sbj6   10.xx.xx.77
+    '
+    ```
+  - Pod 수동 삭제(실제 운영상으로는 늘상 저절로 일어날 수 있는 일)
+    ```bash
+    kubectl delete pod -l app=numbers-api
+    # pod "numbers-api-76d585d955-8sbj6" deleted
+    ```
+  - 새로 생성된 Pod 의 이름과 IP 주소 확인
+    ```bash
+    kubectl get pod -l app=numbers-api -o custom-columns=NAME:metadata.name,POD_IP:status.podIP
+    :'
+    NAME                           POD_IP
+    numbers-api-76d585d955-q6f28   10.xx.xx.79
+    '
+    ```
+  - port-forward 적용
+    ```bash
+    kubectl port-forward deploy/numbers-web 8080:80
+    :'
+    Forwarding from 127.0.0.1:8080 -> 80
+    Forwarding from [::1]:8080 -> 80
+    Handling connection for 8080
+    Handling connection for 8080
+    ^Z
+    [1]  + 21888 suspended  kubectl port-forward deploy/numbers-web 8080:80
+    '
+    ```
+  - http://localhost:8080
+    - Go를 누르면 오류 없이 잘 실행 됨
+  - port-forward 중단
+    - ctrl-c
+      - npx kill-port 8080
+      - 이 필요할 수도 있음
 
 - bla
   - bla
