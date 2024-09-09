@@ -229,6 +229,89 @@
       - npx kill-port 8080
       - 이 필요할 수도 있음
 
+## 3.3. 외부 트래픽을 Pod로 전달하기
+- 여러가지 방법 중
+  - LoadBalancer - 간단하고 유연한 방법
+  - NodePort - 
+
+### 3.3.1. LoadBalancer
+- 외부 로드벨런서 --> 로드벨런서 서비스(Cluster 전체) --> Pod
+  - 외부 로드벨런서와 함께 동작
+  - label selector 와 일치하는 Pod 으로 전달
+- Pod이 많아지면 노드를 선택해야 하는 까다로울 수 있는 문제를 Kubernetes가 해결해준다.
+- 실습 1 - LoadBalancer 서비스를 Cluster에 배치하고, IP 주소를 찾아라
+  - LoadBalancer yaml 정의
+    ```yaml
+    apiVersion: v1
+    kind: Service
+    
+    metadata:
+      name: numbers-web
+    
+    spec:
+      ports:
+        - port: 8080
+          targetPort: 80
+      selector:
+        app: numbers-web
+      type: LoadBalancer
+    ```
+  - 로드밸런서 서비스를 배치
+    ```bash
+    kubectl apply -f numbers/web-service.yaml
+    # service/numbers-web created
+    ```
+  - 서비스의 상세 정보를 확인
+    ```bash
+    kubectl get svc numbers-web
+    ## 
+    :'
+    NAME          TYPE           CLUSTER-IP     EXTERNAL-IP    PORT(S)          AGE
+    numbers-web   LoadBalancer   10.xx.xx.xx   192.168.xx.xx   8080:32219/TCP   57s
+    '
+    # CLUSTER-IP: 로드벨런서 서비스는 CLUSTER-IP가 부여됨. 실제 공인 IP를 부여받는다.
+    # EXTERNAL-IP: 이 외부 주소로 들어오는 트래픽을 Cluster로 전달됨. Cluster에서 제공되는 주소
+    ```
+  - app의 URL을 EXTERMAL-IP 필트로 출력
+    ```bash
+    kubectl get svc numbers-web -o jsonpath='http://{.status.loadBalancer.ingress[0].*}:8080'
+    # http://192.168.xx.xx VIP:8080%
+    # ingress: 입구, Kubernetes에서는 traffic을 다른 Backend에 전달하는 것을 뜻함
+    ```
+- local이나 K3s 에서 여러개의 LoadBalancer service를 사용하려면 이들 port를 다르게 지정
+
+### 3.3.2. NodePort
+- 외부 로드밸런서가 필요 없다.
+- 노드1, 노드2 ... 노트n번 --> NodePort service --> Pod
+- 단점
+  - 서비스에서 설정된 포트가 모든 노드에서 개방되어 있어야 함
+    - LoadBalancer service 보다 유연하지 못한 점
+  - 다중 노드 클러스터에서 로드밸런싱 효과를 얻을 수 없다.
+  - 분산 수준 조금 더 좋지 않다.
+  - 클러스터 환경에 따라 동일하게 동작하지 않음
+  - manifest 가 일관될 수 없어서 실제로 사용할 일이 별로 없다.
+
+- 예제1
+  - nodePort 정의 - web-service-nodePort.yaml
+    ```yaml
+    apiVersion: v1
+    kind: Service
+    
+    metadata:
+      name: numbers-web-node
+    
+    spec:
+      ports:
+        - port: 8080                  # 다른 Pod에서 이 Service에 접근하기 위해 사용하는 Port 
+          targetPort: 80              # 대상 Pod에 트래픽을 전달하는 Port
+          nodePort: 30080             # Service가 외부에 공개되는 Port
+      selector:
+        app: numbers-web
+      type: NodePort                  # 노드의 IP 주소를 통해 접근 가능한 Service
+    ```
+
+
+
 - bla
   - bla
     ```bash
