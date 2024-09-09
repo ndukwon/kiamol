@@ -310,6 +310,156 @@
       type: NodePort                  # 노드의 IP 주소를 통해 접근 가능한 Service
     ```
 
+## 3.4. Kubernetes 클러스터 외부로 트래픽 전달하기
+- Cluster 외부와 연동
+ 
+### 3.4.1. ExternalName 서비스 사용
+- 외부 도메인에 대한 별명 달기
+- 앱 내에서는 로컬 네임을 사용 - Kubenetes DNS 서버가 외부 도메인으로 변환해주는 방식
+- 앱 설정에 포함하기 어려운 환경 간 차이를 반영할때 유용
+  - Database name 대신 지정된 문자열 사용
+- 단점
+  - 앱이 사용하는 주소가 가리키는 대상을 치환할 뿐 요청의 내용 자체를 바꾸어 주지 못한다.
+    - TCP 프로토콜은 문제 없음
+    - HTTP 서비스에는 문제
+      - HTTP 요청 header에 대상 hostname이 들어가는데 ExternalName service의 응답과 다르다면 요청이 실패
+      - 해결위해 작접 header의 hostname을 수정해야 함
+- 실습 1 - 기존 ClusterIP Service 삭제하고 ExternalName Service 로 대체한다.
+  - 기존 ClusterIP Service 확인
+    ```bash
+    kubectl get svc
+    :'
+    NAME          TYPE           CLUSTER-IP      EXTERNAL-IP    PORT(S)          AGE
+    kubernetes    ClusterIP      10.43.0.1       <none>         443/TCP          15d
+    numbers-api   ClusterIP      10.43.119.107   <none>         80/TCP           2d23h
+    numbers-web   LoadBalancer   10.43.242.13    192.168.5.15   8080:32219/TCP   47h
+    sleep-2       ClusterIP      10.43.44.128    <none>         80/TCP           5d1h
+    '
+    ```
+  - numbers-api ClusterIP Service 삭제
+    ```bash
+    kubectl delete svc numbers-api
+    # service "numbers-api" deleted
+    ```
+  - ExternalName Service 로 새로 배포
+    ```bash
+    kubectl apply -f numbers-services/api-service-externalName.yaml
+    # service/numbers-api created
+    ```
+  - Service 상세 정보 확인
+    ```bash
+    kubectl get svc numbers-api
+    :'
+    NAME          TYPE           CLUSTER-IP   EXTERNAL-IP                 PORT(S)   AGE
+    numbers-api   ExternalName   <none>       raw.githubusercontent.com   <none>    79s
+    '
+    ```
+  - localhost:8080
+    - 계속 42만 나옴
+- 실습2 - nslookup으로 도메인 네임 조회
+  - ExternalName 서비스 정의 - api-service-externalName.yaml
+    ```yaml
+    apiVersion: v1
+    kind: Service
+    
+    metadata:
+      name: numbers-api                           # 클러스터 안에서 쓰이는 로컬 도메인 네임
+    
+    spec:
+      type: ExternalName
+      externalName: raw.githubusercontent.com     # 로컬 도메인 네임을 치환해줄 외부 도메인. CNAME(Canonical NAME)
+    ```
+  - nslookup으로 도메인 네임 조회
+    ```bash
+    kubectl exec deploy/sleep-1 -- sh -c 'nslookup numbers-api | tail -n 5'
+    :'
+    Name:   raw.githubusercontent.com
+    Address: 185.199.108.133
+
+    numbers-api.default.svc.cluster.local   canonical name = raw.githubusercontent.com
+    '
+    # tail -n 5 --> 마지막 5줄 출력
+    ```
+  - 
+
+### 3.4.2. Headless Service
+- ExternalName과 유사한 방식
+- ClusterIP 형태로 정의
+- labelSelector 없으므로 대상 Pod 도 없음
+- 제공할 IP 주소 목록 Endpoint resource 와 함께 배포
+- YAML에서 각 리소스의 정의를 구분하기 위해 하이픈 3개 사용
+- 실습 1 - ExternalName Service를 Headless로 대체
+  - Headless 서비스 정의 - api-service-headless.yaml
+    ```yaml
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: numbers-api
+    spec:
+      type: ClusterIP             # selector 필드가 없으므로 Headless Service 가 됨
+      ports:
+        -- port: 80
+    ---
+    kind: Endpoints               # 한 파일에 두 번째 리소스 정의
+    apiVersion: v1
+    metadata:
+      name: numbers-api
+    subsets:
+      - addresses:
+          - ip: 192.168.123.234   # 정적 IP 주소 목록
+        ports:
+          - port: 80              # 각 IP 주소에서 주시할 포트
+    ```
+  - 기존 Service 조회
+    ```bash
+    kubectl get svc
+    :'
+    NAME          TYPE           CLUSTER-IP     EXTERNAL-IP                 PORT(S)          AGE
+    kubernetes    ClusterIP      10.43.0.1      <none>                      443/TCP          15d
+    numbers-api   ExternalName   <none>         raw.githubusercontent.com   <none>           62m
+    numbers-web   LoadBalancer   10.43.242.13   192.168.5.15                8080:32219/TCP   2d
+    sleep-2       ClusterIP      10.43.44.128   <none>                      80/TCP           5d2h
+    '
+    ```
+  - 기존 ExternalName 삭제
+    ```bash
+    kubectl delete svc numbers-api
+    # service "numbers-api" deleted
+    ```
+  - Headless service 배포
+    ```bash
+    kubectl apply -f numbers-services/api-service-headless.yaml
+    # service/numbers-api created
+    # endpoints/numbers-api created
+    ```
+  - 서비스의 상세정보 확인
+    ```bash
+    kubectl get svc numbers-api
+    :'
+    NAME          TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+    numbers-api   ClusterIP   10.43.221.128   <none>        80/TCP    65s
+    '
+    ```
+  - Endpoint의 상세 정보를 확인
+    ```bash
+    kubectl get endpoints numbers-api
+    :'
+    NAME          ENDPOINTS            AGE
+    numbers-api   192.168.123.234:80   3m4s
+    '
+    ```
+  - DNS 조회 결과를 확인
+    ```bash
+    kubectl exec deploy/sleep-1 -- sh -c 'nslookup numbers-api | grep "^[^*]"'
+    :'
+    Server:         10.43.0.10
+    Address:        10.43.0.10:53
+    Name:   numbers-api.default.svc.cluster.local
+    Address: 10.43.221.128
+    '
+    ```
+  - localhost:8080
+    - 오류 발생 - Endpoint가 실재하지 않으므로 에러
 
 
 - bla
