@@ -461,7 +461,146 @@
   - localhost:8080
     - 오류 발생 - Endpoint가 실재하지 않으므로 에러
 
-
+## 3.5. Kubernetes Service의 해소 과정
+- Kubernetes는 대부분의 네트워크 설정을 제공
+  - 안정적인 네트워크 기술에 기반을 둔 것 - 어떻게?
+    - https://github.com/kubernetes/design-proposals-archive/blob/main/network/networking.md
+- ClusterIP는 네트워크상 실재하지 않는 가상 IP 주소
+  - Pod -> 네트워크 프록시 -> 패킷 필터링 -> 가상 IP 주소 -> 실제 Endpoint로 연결
+- Service 리소스는 삭제될때까지 IP 주소가 바뀌지 않음
+- Service 내부 Controller가 Pod 변경시 마다 Endpoint 목록을 최신으로 업데이트
+- 실습1 - Service의 Endpoint 목록 출력
+  - sleep-2 Service의 Endpoint 목록 출력
+    ```bash
+    kubectl get endpoints sleep-2
+    :'
+    NAME      ENDPOINTS       AGE
+    sleep-2   10.42.0.95:80   6d
+    '
+    ```
+  - Pod 삭제
+    ```bash
+    kubectl delete pods -l app=sleep-2
+    # pod "sleep-2-594d57479-qz9r6" deleted
+    ```
+  - Endpoint 다시 확인
+    ```bash
+    kubectl get endpoints
+    :'
+    NAME          ENDPOINTS            AGE
+    kubernetes    192.168.5.15:6443    16d
+    numbers-api   192.168.123.234:80   21h
+    numbers-web   10.42.0.96:80        2d22h
+    sleep-2       10.42.0.100:80       6d
+    '
+    ```
+  - Deployment 삭제
+    ```bash
+    kubectl delete deploy sleep-2
+    # deployment.apps "sleep-2" deleted
+    ```
+  - Endpoint 다시 확인
+    ```bash
+    kubectl get endpoints
+    :'
+    NAME          ENDPOINTS            AGE
+    kubernetes    192.168.5.15:6443    16d
+    numbers-api   192.168.123.234:80   22h
+    numbers-web   10.42.0.96:80        2d22h
+    sleep-2       <none>               6d
+    '
+    # Endpoint가 사라짐
+    ```
+### Namespace of Kubernetes
+- Namespace는 Cluster를 논리적 파티션으로 분할하는 역할
+  - default Namespace가 항상 존재
+  - 다른 Namespace를 주가하여 여러 리소스를 묶는다.
+  - Namespace 안에서는 도메인 네임을 이용하여 서비스에 접근
+  - 완전한 도메인 네임으로도 Service에 접근할 수 있다.
+    - numbers-api.default.svc.cluster.local
+  - kube-system Namespace
+    - DNS server, Kubernetes API 등 내장 컴포넌트가 소속되어 Pod에서 동작
+  - 보안을 해치지 않고도 Cluster 활용도를 높일 수 있는 강력한 수단
+  - Pod의 IP를 우리가 직접 참조할 일은 거의 없음
+- Service는 자신이 속하지 않은 Namespace에도 접근 가능
+- 실습 - 다른 Namespace에 접근
+  - default Namespace의 Service resource 목록 확인
+    ```bash
+    kubectl get svc --namespace default
+    :'
+    NAME          TYPE           CLUSTER-IP      EXTERNAL-IP    PORT(S)          AGE
+    kubernetes    ClusterIP      10.43.0.1       <none>         443/TCP          16d
+    numbers-api   ClusterIP      10.43.221.128   <none>         80/TCP           22h
+    numbers-web   LoadBalancer   10.43.242.13    192.168.5.15   8080:32219/TCP   2d23h
+    sleep-2       ClusterIP      10.43.44.128    <none>         80/TCP           6d1h
+    '
+    ```
+  - kube-system Namespace Service resource 목록 확인
+    ```bash
+    kubectl get svc -n kube-system
+    :'
+    NAME             TYPE           CLUSTER-IP      EXTERNAL-IP    PORT(S)                      AGE
+    kube-dns         ClusterIP      10.43.0.10      <none>         53/UDP,53/TCP,9153/TCP       16d
+    metrics-server   ClusterIP      10.43.149.91    <none>         443/TCP                      16d
+    traefik          LoadBalancer   10.43.167.168   192.168.5.15   80:32513/TCP,443:30266/TCP   16d
+    '
+    ```
+  - 완전한 도메인 네임으로 DNS 조회
+    ```bash
+    kubectl exec deploy/sleep-1 -- sh -c 'nslookup numbers-api.default.svc.cluster.local | grep "^[^*]"'
+    :'
+    Server:         10.43.0.10
+    Address:        10.43.0.10:53
+    Name:   numbers-api.default.svc.cluster.local
+    Address: 10.43.221.128
+    '
+    ```
+  - Kubernetes 시스템 Namespace의 완전한 도메인 네임으로 DNS 조회하기
+    ```bash
+    kubectl exec deploy/sleep-1 -- sh -c 'nslookup kube-dns.kube-system.svc.cluster.local | grep "^[^*]"'
+    :'
+    Server:         10.43.0.10
+    Address:        10.43.0.10:53
+    Name:   kube-dns.kube-system.svc.cluster.local
+    Address: 10.43.0.10
+    '
+    ```
+- 실습2 - Service를 삭제할 때 Deployment는 같이 삭제 되지 않음을 확인
+  - 모든 Deployment 삭제
+    ```bash
+    kubectl delete deploy --all
+    :'
+    deployment.apps "numbers-api" deleted
+    deployment.apps "numbers-web" deleted
+    deployment.apps "sleep-1" deleted
+    '
+    # Namespace 를 지정하지 않았으므로 삭제 대상은 default Namespace 에 속한 리소스
+    ```
+  - 모든 Deployment 조회
+    ```bash
+    kubectl get deploy
+    # No resources found in default namespace.
+    ```
+  - 모든 Service 삭제
+    ```bash
+    kubectl delete svc --all
+    :'
+    service "kubernetes" deleted
+    service "numbers-api" deleted
+    service "numbers-web" deleted
+    service "sleep-2" deleted
+    '
+    # Service는 명시적으로 자정하여 삭제 필요 --> default Namespace 에 속한 kubernetes API 까지도 삭제된다.
+    ```
+  - 남아있는 리소스 확인
+    ```bash
+    kubectl get all
+    :'
+    NAME                 TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
+    service/kubernetes   ClusterIP   10.43.0.1    <none>        443/TCP   117s
+    '
+    # Kubernetes 리소스를 관리하는 Controller 객체가 kube-system Namespace에 있어서 Kubernetes API를 복구해준다. 
+    ```
 - bla
   - bla
     ```bash
