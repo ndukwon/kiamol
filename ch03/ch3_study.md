@@ -601,6 +601,153 @@
     '
     # Kubernetes 리소스를 관리하는 Controller 객체가 kube-system Namespace에 있어서 Kubernetes API를 복구해준다. 
     ```
+
+## 3.6. 연습문제
+- 목표
+  - ch03/lab/deployments.yaml 사용
+  - Pod 확인
+  - 도메인 네임이 numbers-api인 pod에서 api에 접근이 가능하도록 하는 서비스 정의를 작성
+  - 웹 앱 버전2를 8088 포트를 이용하여 외부에서 접근할 수 있도록 하는 서비스 정의를 작성
+  - 파드의 레이블에 주의해야 한다.
+- 풀이
+  1. ch03/lab/deployments.yaml 내용 확인
+     ```yaml
+     apiVersion: apps/v1
+     kind: Deployment
+     metadata:
+       name: lab-numbers-api
+     spec:
+       selector:
+         matchLabels:
+           app: lab-numbers-api
+           version: v1
+       template:
+         metadata:
+           labels:
+             app: lab-numbers-api
+             version: v1
+        spec:
+         containers:
+           - name: api
+             image: kiamol/ch03-numbers-api
+     ---
+     apiVersion: apps/v1
+     kind: Deployment
+     metadata:
+       name: lab-numbers-web
+     spec:
+       selector:
+         matchLabels:
+           app: lab-numbers-web
+           version: v1
+       template:
+         metadata:
+           labels:
+             app: lab-numbers-web
+             version: v1
+         spec:
+           containers:
+             - name: web
+               image: kiamol/ch03-numbers-web
+     ---
+     apiVersion: apps/v1
+     kind: Deployment
+     metadata:
+       name: lab-numbers-web-v2
+     spec:
+       selector:
+         matchLabels:
+           app: lab-numbers-web
+           version: v2
+       template:
+         metadata:
+           labels:
+             app: lab-numbers-web
+             version: v2
+         spec:
+           containers:
+             - name: web
+               image: kiamol/ch03-numbers-web:v2
+     ```
+  2. deployment 배포
+     ```bash
+     kubectl apply -f lab/deployments.yaml
+     # deployment.apps/lab-numbers-api created
+     # deployment.apps/lab-numbers-web created
+     # deployment.apps/lab-numbers-web-v2 created
+     ```
+  3. Pod 확인
+     ```bash
+     kubectl get pods --show-labels
+     :'
+     NAME                                 READY   STATUS    RESTARTS   AGE     LABELS
+     lab-numbers-api-7cf65b888-nsl99      1/1     Running   0          3m55s   app=lab-numbers-api,pod-template-hash=7cf65b888,version=v1
+     lab-numbers-web-95588fcfd-9nls4      1/1     Running   0          3m55s   app=lab-numbers-web,pod-template-hash=95588fcfd,version=v1
+     lab-numbers-web-v2-66b89fc6f-btw42   1/1     Running   0          3m55s   app=lab-numbers-web,pod-template-hash=66b89fc6f,version=v2
+     '
+     ```
+  4. numbers-api API 접근 가능하도록 하는 Service 정의 - [cluster-ip-service.yaml](./lab/cluster-ip-service.yaml)
+     ```yaml
+     apiVersion: v1
+     kind: Service
+     metadata:
+       name: numbers-api
+     spec:
+       selector:
+         app: lab-numbers-api
+         version: v1
+       ports:
+         - port: 80
+       type: ClusterIP
+     ```
+  5. 4번 [cluster-ip-service.yaml](./lab/cluster-ip-service.yaml) 서비스 실행
+     ```bash
+     kubectl apply -f lab/cluster-ip-service.yaml
+     # service/numbers-api created
+     ```
+  6. 서비스 확인
+     ```bash
+     kubectl get services
+     :'
+     NAME          TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE
+     kubernetes    ClusterIP   10.43.0.1      <none>        443/TCP   23h
+     numbers-api   ClusterIP   10.43.15.111   <none>        80/TCP    14s
+     '
+     ```
+  7. web v2를 8088 포트로 외부에서 접근할 수 있도록 서비스 정의 - [load-balancer-service.yaml](./lab/load-balancer-service.yaml)
+     ```yaml
+     apiVersion: v1
+     kind: Service
+     metadata:
+       name: numbers-web
+     spec:
+       selector:
+         app: lab-numbers-web
+         version: v2
+       ports:
+         - port: 8088
+           targetPort: 80
+       type: LoadBalancer
+     ```
+  8. 7번 [load-balancer-service.yaml](./lab/load-balancer-service.yaml) 서비스 실행
+     ```bash
+     kubectl apply -f lab/load-balancer-service.yaml
+     # service/numbers-web created
+     ```
+  9. 서비스 확인
+     ```bash
+     kubectl get services
+     :'
+     NAME          TYPE           CLUSTER-IP     EXTERNAL-IP    PORT(S)          AGE
+     kubernetes    ClusterIP      10.43.0.1      <none>         443/TCP          23h
+     numbers-api   ClusterIP      10.43.15.111   <none>         80/TCP           13m
+     numbers-web   LoadBalancer   10.43.67.60    192.168.5.15   8888:30905/TCP   48s
+     '
+     ```
+  10. 웹 확인
+      - http://localhost:8088
+
+
 - bla
   - bla
     ```bash
