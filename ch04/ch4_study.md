@@ -151,3 +151,177 @@
     KIAMOL_CHAPTER=04
     '
     ```
+
+## 4.2. ConfigMap 에 저장한 설정 파일 사용하기
+- Kubernetes 는 ConfigMap 생성하고 만드는 방법에 여러 변화가 있었음
+- 보편적인 설정 전략
+  1. 기본 설정값은 컨테이너 이미지에 포함시킨다.
+     - docker run 으로 실행될 수 있게
+  2. ConfigMap에 담아 컨테이너에 전달
+     - 컨테이너에 파일 형태로 주입, 또는 파일을 덮어쓰는 형태
+     - 앱에서 지정된 경로에서 설정 데이터 파일을 확인
+  3. 변경이 필요한 설정 값 --> deployment 내 Pod 정의에서 환경변수로 적용
+
+- 실습1 - 환경변수 파일로 ConfigMap 생성하고 사용
+  - env 파일 - ch04.env
+    ```env
+    KIAMOL_CHAPTER=ch04
+    KIAMOL_SECTION=ch04-4.1
+    KIAMOL_EXERCISE=try it now
+    ```
+  - 환경파일의 내용으로 ConfigMap 생성
+    ```bash
+    kubectl create configmap sleep-config-env-file --from-env-file=sleep/ch04.env
+    # configmap/sleep-config-env-file created
+    ```
+  - ConfigMap의 상세 정보 확인
+    ```bash
+    kubectl get cm sleep-config-env-file
+    :'
+    NAME                    DATA   AGE
+    sleep-config-env-file   3      26s
+    '
+    ```
+  - 새로운 ConfigMap의 설정을 적용
+    ```bash
+    kubectl apply -f sleep/sleep-with-configMap-env-file.yaml
+    # deployment.apps/sleep configured
+    ```
+  - 컨테이너에 적용된 환경 변수의 값 확인
+    ```bash
+    kubectl exec deploy/sleep -- sh -c 'printenv | grep "^KIAMOL"'
+    :'
+    KIAMOL_EXERCISE=try it now
+    KIAMOL_SECTION=4.1
+    KIAMOL_CHAPTER=04
+    '
+    # KIAMOL_CHAPTER, KIAMOL_SECTION 항목이 선언한 것과 다름
+    # yaml에서 envFrom보다 env로 선언된 것이 우선하기 때문
+    ```
+  - 순서 변경된 ConfigMap의 설정을 적용
+    ```bash
+    kubectl apply -f sleep/sleep-with-configMap-env-file_v2.yaml
+    # deployment.apps/sleep unchanged
+    ```
+  - 컨테이너에 적용된 환경 변수의 값 확인 v2
+    ```bash
+    kubectl exec deploy/sleep -- sh -c 'printenv | grep "^KIAMOL"'
+    :'
+    KIAMOL_EXERCISE=try it now
+    KIAMOL_SECTION=4.1
+    KIAMOL_CHAPTER=04
+    '
+    # 순서 바꾼다고 달라지지 않음
+    ```
+  - env 부분을 삭제한 ConfigMap의 설정을 적용
+    ```bash
+    kubectl apply -f sleep/sleep-with-configMap-env-file_v3.yaml
+    # deployment.apps/sleep configured
+    ```
+  - 컨테이너에 적용된 환경 변수의 값 확인 v3
+    ```bash
+    kubectl exec deploy/sleep -- sh -c 'printenv | grep "^KIAMOL"'
+    :'
+    KIAMOL_EXERCISE=try it now
+    KIAMOL_SECTION=ch04-4.1
+    KIAMOL_CHAPTER=ch04
+    '
+    # env 항목을 삭제하면 적용됨
+    ```
+- 실습2 - todo-list 앱 띄우기
+  - yaml 구성 살펴보기
+    ```yaml
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: todo-web
+    spec:
+      ports:
+        - port: 8080
+          targetPort: 80
+      selector:
+        app: todo-web
+      type: LoadBalancer
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: todo-web
+    spec:
+      selector:
+        matchLabels:
+          app: todo-web
+      template:
+        metadata:
+          labels:
+            app: todo-web
+        spec:
+          containers:
+            - name: web
+              image: kiamol/ch04-todo-list
+              env:
+              - name: Logging__LogLevel__Default  # .net의 설정
+                value: Warning
+    ```
+  - Service와 함께 앱 배치
+    ```bash
+    kubectl apply -f todo-list/todo-web.yaml
+    # service/todo-web created
+    # deployment.apps/todo-web created
+    ```
+  - Pod가 준비 상태가 될때까지 대기
+    ```bash
+    kubectl wait --for=condition=Ready pod -l app=todo-web
+    # pod/todo-web-557496b8c4-qtrwm condition met
+    ```
+  - 앱에 접근하기 위한 주소를 파일로 출력
+    ```bash
+    kubectl get svc todo-web
+    :'
+    NAME       TYPE           CLUSTER-IP     EXTERNAL-IP    PORT(S)          AGE
+    todo-web   LoadBalancer   10.43.54.237   192.168.5.15   8080:31763/TCP   23h
+    '
+    ```
+  - 웹 페이지 확인 - http://localhost:8080
+  - config 페이지 확인 - http://localhost:8080/config
+    - 접근되지 않음
+  - 앱 로그 확인
+    ```bash
+    kubectl logs -l app=todo-web
+    :'
+    info: ToDoList.Pages.NewModel[0]
+      New item created
+    warn: ToDoList.Pages.ConfigModel[0]
+      Attempt to view config settings
+    '
+    ```
+- 실습3 - 
+  1. yaml 에 config 정의
+     ```yaml
+     apiVersion: v1
+     kind: ConfigMap
+     metadata:
+       name: todo-web-config-dev
+     data:
+       config.json: |-
+         {
+           "ConfigController": {
+             "Enabled": true
+           }
+         }
+     ```
+  2. JSON 이 담긴 ConfigMap 생성
+     ```bash
+     kubectl apply -f todo-list/configMaps/todo-web-config-dev.yaml
+     # configmap/todo-web-config-dev created
+     # yaml 의 설정대로 todo-web-config-dev 이름의 ConfigMap이 만들어졌다. 
+     ```
+  3. ConfigMap 참조 하도록 앱 업데이트
+     ```bash
+     kubectl apply -f todo-list/todo-web-dev.yaml
+     # deployment.apps/todo-web configured
+     ```
+  4. config 페이지 확인 - http://localhost:8080/config
+    - 즉각 적용은 안되었지만 1분정도 후 적용되었다.
+    - 이 부분이 활성화 적용된다. https://github.com/sixeyed/kiamol/blob/master/ch04/docker-images/todo-list/src/Pages/Config.cshtml.cs#L27
+     
