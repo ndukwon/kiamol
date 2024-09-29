@@ -324,4 +324,243 @@
   4. config 페이지 확인 - http://localhost:8080/config
     - 즉각 적용은 안되었지만 1분정도 후 적용되었다.
     - 이 부분이 활성화 적용된다. https://github.com/sixeyed/kiamol/blob/master/ch04/docker-images/todo-list/src/Pages/Config.cshtml.cs#L27
-     
+
+## 4.3. ConfigMap에 담긴 설정값 데이터 주입하기
+- 컨테이너 파일시스템
+  - 컨테이터 이미지 + 그 외 출처에서 온 파일로 구성된 가상 구조
+  - 컨테이너 파일 시스템 속 파일로 설정값을 주입하여 전달이 가능
+- Kubernetes가 컨테이너 파일시스템 구성에 ConfigMap 추가 가능 - 디렉토리 형태로 읽어올 수 있다.
+  - ex)
+    - /app <-- 컨테이너 이미지
+    - /app/config <-- ConfigMap
+- Pod 이 동작중인 상태에서 ConfigMap을 업데이트하면 컨테이너까지 전달된다.
+  - 앱마다 참조하는 방식이 달라서 적용여부는 알 수 없다. 
+- 실습1
+  - ConfigMap을 Pod의 volume에 로드하고 특정 경로에 volumeMount 하는 todo-web-dev.yaml
+    ```yaml
+    spec:
+      containers:
+        - name: web
+          image: kiamol/ch04-todo-list
+          volumeMounts:                       # 컨테이너에 volume을 mount 
+            - name: config                    # volume 부분에서 정의한 이름
+              mountPath: "/app/config"        # volume 이 올라갈 경로
+              readOnly: true                  # 읽기 전용 여부
+      volumes:                                # Pod 레벨에서 volume 정의함
+        - name: config                        # volume 의 이름 선언
+          configMap:                          # volume 의 원본 - ConfigMap
+            name: todo-web-config-dev         # ConfigMap 의 이름
+    ```
+  - 기본 설정값이 담긴 설정 파일 확인
+    ```bash
+    kubectl exec deploy/todo-web -- sh -c 'ls -l /app/app*.json'
+    :'
+    -rw-r--r--    1 root     root           469 Sep  1  2022 /app/appsettings.json
+    '
+    ```
+  - 다른파일도 확인해봄
+    ```bash
+    kubectl exec deploy/todo-web -- sh -c 'ls'
+    :'
+    Microsoft.Data.Sqlite.dll
+    Microsoft.EntityFrameworkCore.Abstractions.dll
+    Microsoft.EntityFrameworkCore.Relational.dll
+    Microsoft.EntityFrameworkCore.Sqlite.dll
+    Microsoft.EntityFrameworkCore.dll
+    Microsoft.Extensions.DependencyModel.dll
+    Npgsql.EntityFrameworkCore.PostgreSQL.dll
+    Npgsql.dll
+    Prometheus.AspNetCore.dll
+    Prometheus.NetCore.dll
+    Prometheus.NetStandard.dll
+    SQLitePCLRaw.batteries_v2.dll
+    SQLitePCLRaw.core.dll
+    SQLitePCLRaw.provider.e_sqlite3.dll
+    ToDoList
+    ToDoList.deps.json
+    ToDoList.dll
+    ToDoList.pdb
+    ToDoList.runtimeconfig.json
+    appsettings.json
+    config
+    runtimes
+    web.config
+    wwwroot
+    '
+    ```
+  - volumeMount로 주입된 설정 파일 확인
+    ```bash
+    kubectl exec deploy/todo-web -- sh -c 'ls -l /app/config/*.json'
+    :'
+    lrwxrwxrwx    1 root     root            18 Sep 22 14:58 /app/config/config.json -> ..data/config.json
+    '
+    ```
+  - volumeMount가 실제로 읽기 전용인지 확인
+    ```bash
+    kubectl exec deploy/todo-web -- sh -c 'echo ch04 >> /app/config/config.json'
+    :'
+    sh: cant create /app/config/config.json: Read-only file system
+    command terminated with exit code 1
+    '
+
+- 실습2 - ConfigMap을 디렉토리 형태로 읽기
+  - 앱 컨트롤러 설정, 로그설정을 두개의 JSON으로 분리 수정 yaml 
+    ```yaml
+    data:
+      config.json: |-
+        {
+          "ConfigController": {
+            "Enabled": true
+          }
+        }
+      logging.json: |-
+        {
+          "Logging": {
+            "LogLevel": {
+              "ToDoList.Pages": "Debug"
+            }
+          }
+        }
+    ```
+  - 앱 로그 확인
+    ```bash
+    kubectl logs -l app=todo-web
+    ```
+  - ConfigMap 업데이트
+    ```bash
+    kubectl apply -f todo-list/configMaps/todo-web-config-dev-with-logging.yaml
+    # configmap/todo-web-config-dev configured
+    ```
+  - 업데이트 반영 대기
+    ```bash
+    sleep 120
+    ```
+  - 설정 파일에 반영되었는지 확인
+    ```bash
+    kubectl exec deploy/todo-web -- sh -c 'ls -l /app/config/*.json'
+    :'
+    lrwxrwxrwx    1 root     root            18 Sep 22 14:58 /app/config/config.json -> ..data/config.json
+    lrwxrwxrwx    1 root     root            19 Sep 27 18:07 /app/config/logging.json -> ..data/logging.json
+    '
+    ```
+  - 앱에 접근하여 로그출력 변경사항 확인
+    ```bash
+    kubectl logs -l app=todo-web
+    :'
+    dbug: ToDoList.Pages.IndexModel[0]
+      GET / called
+    dbug: ToDoList.Pages.IndexModel[0]
+      Fetched count: 0 from service
+    '
+    # debug 레벨 로그가 나오기 시작
+    ```
+- 실습3 - configMap의 path 설정 잘못한 경우
+  - path 설정 잘못된 yaml [todo-web-dev-broken.yaml](./todo-list/todo-web-dev-broken.yaml)
+    ```yaml
+    spec:
+      containers:
+        - name: web
+          image: kiamol/ch04-todo-list
+          volumeMounts:
+            - name: config              # Mount할 ConfigMap volume의 이름
+              mountPath: "/app""        # 잘못 설정된 path
+    ```
+  - 설정 오류 Pod 배치
+    ```bash
+    kubectl apply -f todo-list/todo-web-dev-broken.yaml
+    # deployment.apps/todo-web configured
+    ```
+  - 앱 동작 확인 - http://localhost:8080
+  - 앱 로그 확인
+    ```bash
+    kubectl logs -l app=todo-web
+    :'
+    dbug: ToDoList.Pages.ListModel[0]
+          Fetched 0 items from service
+    dbug: ToDoList.Pages.IndexModel[0]
+          GET / called
+    dbug: ToDoList.Pages.IndexModel[0]
+          Fetched count: 0 from service
+    dbug: ToDoList.Pages.ListModel[0]
+          GET /list called
+    dbug: ToDoList.Pages.ListModel[0]
+          Fetched 0 items from service
+      * You intended to execute a .NET application:
+          The application 'ToDoList.dll' does not exist.
+      * You intended to execute a .NET SDK command:
+          No .NET SDKs were found.
+
+    Download a .NET SDK:
+    https://aka.ms/dotnet-download
+
+    Learn about SDK resolution:
+    https://aka.ms/dotnet/sdk-not-found
+    '
+    # 기존 Pod
+    ```
+  - Pod 상태 확인
+    ```bash
+    kubectl get pods -l app=todo-web
+    :'
+    NAME                        READY   STATUS             RESTARTS      AGE
+    todo-web-68848b9c4d-plrwk   1/1     Running            2 (36h ago)   6d16h
+    todo-web-7945b8fd6f-6vtl8   0/1     CrashLoopBackOff   4 (19s ago)   2m38s
+    '
+    # 3번(?)의 재시도 후 재시작을 멈춘다.
+    # Pod 수가 2개
+    ```
+- 실습4 - 다시 되돌리기
+  - 정상적으로 수정된 yaml - [todo-web-dev-no-logging.yaml](./todo-list/todo-web-dev-no-logging.yaml)
+    ```yaml
+    spec:
+      containers:
+        - name: web
+          image: kiamol/ch04-todo-list
+          volumeMounts:
+            - name: config
+              mountPath: "/app/config"
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: todo-web-config-dev
+            items:                          # ConfigMap에서 전달할 데이터 항목을 지정
+              - key: config.json            # config.json 항목 지정?
+                path: config.json           # config.json 파일로 전달하도록 지정
+    ```
+  - 변경된 정의 배치
+    ```bash
+    kubectl apply -f todo-list/todo-web-dev-no-logging.yaml
+    # deployment.apps/todo-web configured
+    ```
+  - /app/config/ 디렉터리의 내용 확인
+    ```bash
+    kubectl exec deploy/todo-web -- sh -c 'ls /app/config'
+    # config.json
+    ```
+  - 앱 페이지를 두어 번 새로고침 - http://localhost:8080
+  - 출력되는 로그 확인
+    ```bash
+    kubectl logs -l app=todo-web
+    :'
+    fail: Microsoft.AspNetCore.Antiforgery.DefaultAntiforgery[7]
+      An exception was thrown while deserializing the token.
+      Microsoft.AspNetCore.Antiforgery.AntiforgeryValidationException: The antiforgery token could not be decrypted.
+       ---> System.Security.Cryptography.CryptographicException: The key {8a64dc35-84b6-46cd-8a93-fa6ba39435b4} was not found in the key ring. For more information go to http://aka.ms/dataprotectionwarning
+         at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingBasedDataProtector.UnprotectCore(Byte[] protectedData, Boolean allowOperationsOnRevokedKeys, UnprotectStatus& status)
+         at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingBasedDataProtector.Unprotect(Byte[] protectedData)
+         at Microsoft.AspNetCore.Antiforgery.DefaultAntiforgeryTokenSerializer.Deserialize(String serializedToken)
+         --- End of inner exception stack trace ---
+         at Microsoft.AspNetCore.Antiforgery.DefaultAntiforgeryTokenSerializer.Deserialize(String serializedToken)
+         at Microsoft.AspNetCore.Antiforgery.DefaultAntiforgery.GetCookieTokenDoesNotThrow(HttpContext httpContext)
+    '
+    # 책 내용과 조금 다름
+    ```
+  - Pod의 목록과 상태 확인
+    ```bash
+    kubectl get pods -l app=todo-web
+    :'
+    NAME                        READY   STATUS    RESTARTS   AGE
+    todo-web-7644fb5948-2r8sb   1/1     Running   0          3m29s
+    '
+    ```
