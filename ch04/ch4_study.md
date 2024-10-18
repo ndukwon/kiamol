@@ -564,3 +564,236 @@
     todo-web-7644fb5948-2r8sb   1/1     Running   0          3m29s
     '
     ```
+    
+## 4.4. Secret 이용하여 민감한 정보가 담긴 설정값 다루기
+- 비밀값은 클러스터 내부에서 별도로 관리
+- 비밀값 객체에 접근할 권한이 있다면 평문으로 볼수 있다.
+- 하지만 평문도 Base64로 인코딩된 상태
+- Pod 컨테이너에 전달 된 후에는 평문이 담긴 텍스트파일이 된다.
+  - 앱에서 파일 권한 설정으로 접근을 제어할 수 있다.
+- 실습1 - secret 생성 및 조회
+  - 평문 리터럴로 비밀값 생성
+    ```bash
+    kubectl create secret generic sleep-secret-literal --from-literal=secret=shh...
+    # secret/sleep-secret-literal created
+    ```
+  - 비밀값의 상세 정보 확인
+    ```bash
+    kubectl describe secret sleep-secret-literal
+    :'
+    Name:         sleep-secret-literal
+    Namespace:    default
+    Labels:       <none>
+    Annotations:  <none>
+
+    Type:  Opaque
+
+    Data
+    ====
+    secret:  6 bytes
+    '
+    ```
+  - 비밀값의 평문 확인
+    ```bash
+    kubectl get secret sleep-secret-literal -o jsonpath='{.data.secret}'
+    # c2hoLi4u%
+    ```
+  - 비밀값의 평문을 base64 디코딩 확인
+    ```bash
+    kubectl get secret sleep-secret-literal -o jsonpath='{.data.secret}' | base64 -d
+    # shh...%
+    ```
+- 실습2 - Secret으로 환경변수 주입
+  - 주입받는 앱 yaml 정의
+    ```yaml
+    spec:
+      containers:
+        - name: sleep
+          image: kiamol/ch03-sleep
+          env:                                  # 환경변수의 정의
+          - name: KIAMOL_SECRET                 # 컨테이너에 전달될 환경변수의 이름
+            valueFrom:                          # 환경 변수의 값은 외부에서 온다는 설정 
+              secretKeyRef:                     # 비밀값에서 온다는 설정
+                name: sleep-secret-literal      # 비밀값 이름
+                key: secret                     # 비밀값의 항목 이름
+    ```
+  - sleep deployment 업데이트
+    ```bash
+    kubectl apply -f sleep/sleep-with-secret.yaml
+    # deployment.apps/sleep configured
+    ```
+  - Pod속 환경변수 확인
+    ```bash
+    kubectl exec deploy/sleep -- printenv KIAMOL_SECRET
+    # 첫번째 시도
+    # command terminated with exit code 1
+    # 두번째 시도
+    # shh...
+    ```
+- 실습3 - yaml에 Secret을 환경변수로 정의하여 전달 
+  - 로그인 정보 담긴 yaml [todo-db-secret-test.yaml](todo-list/secrets/todo-db-secret-test.yaml)
+    ```yaml
+    apiVersion: v1
+    kind: Secret                            # 리소스 유형 - Secret
+    metadata:
+      name: todo-db-secret-test             # Secret 의 이름
+    type: Qpaque                            # Qpaque: 임의의 text 데이터
+    stringData:                             # Text data
+      POSTGRES_PASSWORD: "kiamol-2*2*"      # 저장할 data(key-value pair)
+    ```
+  - Secret 생성
+    ```bash
+    kubectl apply -f todo-list/secrets/todo-db-secret-test.yaml
+    # secret/todo-db-secret-test created
+    ```
+  - Data가 인코딩 되었는지 확인 1/2
+    ```bash
+    kubectl get secret todo-db-secret-test
+    :'
+    NAME                  TYPE     DATA   AGE
+    todo-db-secret-test   Opaque   1      9m43s
+    '
+    ```
+  - Data가 인코딩 되었는지 확인 1/2
+    ```bash
+    kubectl get secret todo-db-secret-test -o jsonpath='{.data.POSTGRES_PASSWORD}'
+    # a2lhbW9sLTIqMio=%
+    # value가 encoding 되어 있음
+    ```
+  - Secret 객체의 annotation에 저장된 내용 확인
+    ```bash
+    kubectl get secret todo-db-secret-test -o jsonpath='{.metadata.annotations}'
+    # {"kubectl.kubernetes.io/last-applied-configuration":"{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"annotations\":{},\"name\":\"todo-db-secret-test\",\"namespace\":\"default\"},\"stringData\":{\"POSTGRES_PASSWORD\":\"kiamol-2*2*\"},\"type\":\"Opaque\"}\n"}%
+    # value가 encoding 되어있지 않음
+    ```
+- 실습4 - yaml에 Secret을 파일로 전달
+  - 파일로 전달하는 yaml - [todo-db-test.yaml](todo-list/todo-db-test.yaml)
+    ```yaml
+    spec:
+      containers:
+        - name: db
+          image: postgres:11.6-alpine
+          env:
+            - name: POSTGRES_PASSWORD_FILE            # 설정 파일이 마운트될 경로
+              value: /secrets/postgres_password
+            volumeMounts:                             # Volume 마운트 설정
+              - name: secret                          # 마운트할 Volume 이름
+                mountPath: ".secrets"
+      volumes:
+        - name: secret
+          secret:                                     # Secret 에서 볼륨 생성
+            secretName: todo-db-secret-test           # Volume을 만들 Secret 이름
+            defaultMode: 0400                         # 파일의 권한 설정(0400 = 소유자의 읽기 권한, 0200 = 소유자의 쓰기 권한, 0100 = 소유자의 실행 권한)
+            items:                                    # Secret 의 특정 데이터 항목을 지정
+              - key: POSTGRES_PASSWORD
+                path: postgres_password
+    ```
+  - yaml 적용
+    ```bash
+    kubectl apply -f todo-list/todo-db-test.yaml
+    # service/todo-db created
+    # deployment.apps/todo-db created
+    ```
+  - Pod 의 로그로 확인
+    ```bash
+    kubectl logs -l app=todo-db --tail 1
+    # 2024-10-05 16:49:13.916 UTC [1] LOG:  database system is ready to accept connections
+    ```
+  - Password 설정파일의 권한 확인
+    ```bash
+    kubectl exec deploy/todo-db -- sh -c 'ls -l $(readlink -f /secrets/postgres_password)'
+    # -r--------    1 root     root            11 Oct  5 16:48 /secrets/..2024_10_05_16_48_29.2406213555/postgres_password
+    # readlink 는 파일의 실제 경로를 알려줌
+    # Kubernetes 에서 마운트된 파일은 symlink 를 통해 설정된 경로로 연결
+    ```
+  - Password 설정파일의 권한 확인 2
+    ```bash
+    kubectl exec deploy/todo-db -- sh -c 'ls -la /secrets/postgres_password'
+    # lrwxrwxrwx    1 root     root            24 Oct  5 16:48 /secrets/postgres_password -> ..data/postgres_password
+    ```
+
+- 실습5 - 
+  - configMap 적용
+    ```bash
+    kubectl apply -f todo-list/configMaps/todo-web-config-test.yaml
+    # configmap/todo-web-config-test created
+    ```
+  - Secret 적용
+    ```bash
+    kubectl apply -f todo-list/secrets/todo-web-secret-test.yaml
+    # secret/todo-web-secret-test created
+    ```
+  - Deployment 적용
+    ```bash
+    kubectl apply -f todo-list/todo-web-test.yaml
+    # service/todo-web-test created
+    # deployment.apps/todo-web-test created
+    ```
+  - 컨테이너 속 인증 정보 파일 확인
+    ```bash
+    kubectl exec deploy/todo-web-test -- cat /app/secrets/secrets.json
+    :'
+    {
+      "ConnectionStrings": {
+        "ToDoDb": "Server=todo-db;Database=todo;User Id=postgres;Password=kiamol-2*2*;"
+      }
+    }%
+    '
+    ```
+
+## 4.5. Kubernetes의 앱 설정 관리
+- 외부 설정값 주입 설계시 고려사항
+  - 앱 중단없이 설정 변경에 대응이 필요한가? - Pod 교체도 안되는 무중단 업데이트?
+    - Pod 교체 필요한 방식
+      - 환경변수 - Pod 교체 필요
+      - 볼륨을 수정하는 것
+      - 장점: 변경의 이력이 남는다. 이전 설정으로 돌아가는 선택지가 있다.
+    - Pod 교체 필요없이 해결
+      - 볼륨 마운트를 이용하여 설정파일을 수정 - ConfigMap, Secret 을 업데이트 하는 방식
+  - 민감정보를 어떻게 관리할 것인가?
+    - 민감정보 관리 자동화 방식- 베포시 YAML 템플릿 파일의 빈칸이 보안 저장소에 있는 정보로 채워지는 방식
+    - 설정 전담 조직에서 민감정보 주입 방식
+- 실습 - 지금까지의 리소스 정리
+  - yaml이 있는 디렉토리를 지정하여 디렉토리 내 모든 yaml로 정의 된 리소스를 한번에 삭제 가능하다.
+    ```bash
+    kubectl delete -f sleep/
+    :'
+    deployment.apps "sleep" deleted
+    Error from server (NotFound): error when deleting "sleep/sleep-with-configMap-env-file_v2.yaml": deployments.apps "sleep" not found
+    Error from server (NotFound): error when deleting "sleep/sleep-with-configMap-env-file_v3.yaml": deployments.apps "sleep" not found
+    Error from server (NotFound): error when deleting "sleep/sleep-with-configMap-env.yaml": deployments.apps "sleep" not found
+    Error from server (NotFound): error when deleting "sleep/sleep-with-env.yaml": deployments.apps "sleep" not found
+    Error from server (NotFound): error when deleting "sleep/sleep-with-secret.yaml": deployments.apps "sleep" not found
+    Error from server (NotFound): error when deleting "sleep/sleep.yaml": deployments.apps "sleep" not found
+    '
+    ```
+    ```bash
+    kubectl delete -f todo-list/
+    :'
+    service "todo-db" deleted
+    deployment.apps "todo-db" deleted
+    deployment.apps "todo-web" deleted
+    service "todo-web-test" deleted
+    deployment.apps "todo-web-test" deleted
+    service "todo-web" deleted
+    Error from server (NotFound): error when deleting "todo-list/todo-web-dev-no-logging.yaml": deployments.apps "todo-web" not found
+    Error from server (NotFound): error when deleting "todo-list/todo-web-dev.yaml": deployments.apps "todo-web" not found
+    Error from server (NotFound): error when deleting "todo-list/todo-web.yaml": deployments.apps "todo-web" not found
+    '
+    ```
+    ```bash
+    kubectl delete -f todo-list/configMaps/
+    :'
+    configmap "todo-web-config-dev" deleted
+    configmap "todo-web-config-test" deleted
+    Error from server (NotFound): error when deleting "todo-list/configMaps/todo-web-config-dev.yaml": configmaps "todo-web-config-dev" not found
+    '
+    ```
+    ```bash
+    kubectl delete -f todo-list/secrets/
+    :'
+    secret "todo-db-secret-test" deleted
+    secret "todo-web-secret-test" deleted
+    Error from server (NotFound): error when deleting "todo-list/secrets/todo-db-secret-test.yaml": secrets "todo-db-secret-test" not found
+    '
+    ```
